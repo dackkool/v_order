@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 全互動語音點餐系統</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; background: #121212; color: #fff; max-width: 900px; margin: 0 auto; padding: 20px; }
+        
+        .hero { text-align: center; padding: 20px 0; }
+        .status-badge { display: inline-block; padding: 6px 16px; border-radius: 20px; font-weight: bold; margin-top: 10px; background: #333; }
+        .status-badge.listening { background: #e74c3c; animation: blink 1.2s infinite; }
+        .status-badge.speaking { background: #f1c40f; color: #000; }
+        
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .chat-display { background: #1e1e1e; border-radius: 12px; padding: 15px; margin: 20px 0; min-height: 80px; border: 1px solid #333; }
+        .chat-label { font-size: 0.85em; color: #aaa; margin-bottom: 5px; }
+        .chat-text { font-size: 1.2em; color: #2ecc71; font-weight: 500; }
+
+        .main-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .panel { background: #1e1e1e; border-radius: 12px; padding: 20px; border: 1px solid #333; }
+        
+        .menu-item { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #2a2a2a; }
+        .cart-item { display: flex; justify-content: space-between; padding: 10px 0; color: #e0e0e0; }
+        
+        .btn-mic { width: 100%; padding: 18px; font-size: 1.2em; font-weight: bold; border: none; border-radius: 50px; cursor: pointer; background: #3498db; color: #fff; transition: 0.2s; }
+        .btn-mic:hover { background: #2980b9; }
+
+        .total-price { text-align: right; font-size: 1.4em; font-weight: bold; color: #f39c12; margin-top: 15px; border-top: 1px solid #333; padding-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="hero">
+        <h1>🎙️ 智能語音互動餐廳</h1>
+        <button id="micBtn" class="btn-mic" onclick="startVoiceInteraction()">點擊開始語音點餐</button>
+        <div><span id="status" class="status-badge">點擊上方按鈕開始</span></div>
+    </div>
+
+    <div class="chat-display">
+        <div class="chat-label">AI 聽到您說：</div>
+        <div id="transcript" class="chat-text">「請點擊按鈕後開始說話，例如：我要兩份牛肉麵，再一杯冰奶茶」</div>
+    </div>
+
+    <div class="main-layout">
+        <div class="panel">
+            <h3>📖 菜單</h3>
+            <div class="menu-item"><span>牛肉麵</span><span>$180</span></div>
+            <div class="menu-item"><span>滷肉飯</span><span>$60</span></div>
+            <div class="menu-item"><span>炸雞塊</span><span>$85</span></div>
+            <div class="menu-item"><span>冰奶茶</span><span>$50</span></div>
+            <div class="menu-item"><span>熱紅茶</span><span>$35</span></div>
+        </div>
+
+        <div class="panel">
+            <h3>🛒 您的點餐購物車</h3>
+            <div id="cartList">
+                <p style="color: #666;">購物車為空</p>
+            </div>
+            <div id="totalPrice" class="total-price">總計: $0</div>
+        </div>
+    </div>
+
+    <script>
+        // 菜單項目數據
+        const menu = [
+            { id: 1, name: "牛肉麵", price: 180, keywords: ["牛肉麵", "牛肉", "麵"] },
+            { id: 2, name: "滷肉飯", price: 60, keywords: ["滷肉飯", "魯肉飯", "飯"] },
+            { id: 3, name: "炸雞塊", price: 85, keywords: ["炸雞塊", "炸雞", "雞塊"] },
+            { id: 4, name: "冰奶茶", price: 50, keywords: ["冰奶茶", "奶茶"] },
+            { id: 5, name: "熱紅茶", price: 35, keywords: ["熱紅茶", "紅茶"] }
+        ];
+
+        let cart = {};
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.lang = 'zh-TW';
+            recognition.continuous = false;
+            recognition.interimResults = false;
+
+            recognition.onresult = (event) => {
+                const text = event.results[0][0].transcript;
+                document.getElementById('transcript').innerText = `「${text}」`;
+                processVoiceOrder(text);
+            };
+
+            recognition.onerror = () => updateStatus('識別失敗，請再試一次', false);
+        }
+
+        // 啟動語音監聽
+        function startVoiceInteraction() {
+            if (!recognition) return alert("您的瀏覽器不支援 Web Speech API，請使用 Chrome。");
+            
+            // 停止現有語音播報並開啟麥克風
+            window.speechSynthesis.cancel();
+            recognition.start();
+            updateStatus('🎙️ 正在聆聽中... 請說話', 'listening');
+        }
+
+        // 語意解析與購物車更新
+        function processVoiceOrder(text) {
+            updateStatus('🧠 正在處理您的訂單...', false);
+            let addedItems = [];
+            const numMap = { "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5 };
+
+            // 清空舊指令（如果說「取消」或「清空」）
+            if (text.includes("清空") || text.includes("重來") || text.includes("取消")) {
+                cart = {};
+                updateCartUI();
+                speakResponse("已為您清空購物車，請重新點餐。");
+                return;
+            }
+
+            menu.forEach(item => {
+                item.keywords.forEach(kw => {
+                    if (text.includes(kw)) {
+                        let qty = 1;
+                        const idx = text.indexOf(kw);
+                        for (let i = Math.max(0, idx - 2); i < idx; i++) {
+                            if (numMap[text[i]]) {
+                                qty = numMap[text[i]];
+                                break;
+                            }
+                        }
+
+                        if (cart[item.id]) {
+                            cart[item.id].qty += qty;
+                        } else {
+                            cart[item.id] = { name: item.name, price: item.price, qty: qty };
+                        }
+                        addedItems.push(`${qty}份${item.name}`);
+                    }
+                });
+            });
+
+            updateCartUI();
+
+            // 語音反饋生成
+            if (addedItems.length > 0) {
+                const reply = `好的，已為您加入 ${addedItems.join('、')}。請問還需要其他的嗎？`;
+                speakResponse(reply);
+            } else {
+                speakResponse("不好意思，我沒有聽清您要的餐點，可以再說一次嗎？");
+            }
+        }
+
+        // 語音合成反饋 (Text-to-Speech)
+        function speakResponse(text) {
+            updateStatus('🗣️ AI 回應中...', 'speaking');
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'zh-TW';
+            utterance.rate = 1.0;
+
+            utterance.onend = () => {
+                updateStatus('點擊按鈕繼續點餐', false);
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // 更新購物車畫面
+        function updateCartUI() {
+            const cartEl = document.getElementById('cartList');
+            cartEl.innerHTML = '';
+            let total = 0;
+
+            const items = Object.values(cart);
+            if (items.length === 0) {
+                cartEl.innerHTML = '<p style="color: #666;">購物車為空</p>';
+            } else {
+                items.forEach(item => {
+                    const subtotal = item.price * item.qty;
+                    total += subtotal;
+                    cartEl.innerHTML += `
+                        <div class="cart-item">
+                            <span>${item.name} x ${item.qty}</span>
+                            <span>$${subtotal}</span>
+                        </div>`;
+                });
+            }
+
+            document.getElementById('totalPrice').innerText = `總計: $${total}`;
+        }
+
+        function updateStatus(text, className) {
+            const statusEl = document.getElementById('status');
+            statusEl.innerText = text;
+            statusEl.className = 'status-badge ' + (className || '');
+        }
+    </script>
+</body>
+</html>
