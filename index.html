@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 廣東話全互動點餐系統 (修復版)</title>
+    <title>AI 廣東話全互動點餐系統 (單項取消修復版)</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #121212; color: #fff; max-width: 900px; margin: 0 auto; padding: 20px; }
@@ -34,7 +34,7 @@
 <body>
 
     <div class="hero">
-        <h1>🎙️ 智能廣東話點餐系統 (修復版)</h1>
+        <h1>🎙️ 智能廣東話點餐系統</h1>
         <button id="micBtn" class="btn-mic" onclick="startVoiceInteraction()">按此開始用廣東話落單</button>
         <div><span id="status" class="status-badge">按上方按鈕開始</span></div>
     </div>
@@ -42,7 +42,7 @@
     <!-- 即時語音對話框 -->
     <div class="chat-display">
         <div class="chat-label">AI 聽到你講：</div>
-        <div id="transcript" class="chat-text">「請按按鈕後講話，例如：我要兩碗牛肉麵，一杯凍奶茶」</div>
+        <div id="transcript" class="chat-text">「試講：唔要凍奶茶，改要熱紅茶」</div>
     </div>
 
     <div class="main-layout">
@@ -67,7 +67,6 @@
     </div>
 
     <script>
-        // 菜單數據 (將關鍵字由長到短排序)
         const menu = [
             { id: 1, name: "牛肉麵", price: 180, keywords: ["牛肉麵", "牛肉面", "牛肉"] },
             { id: 2, name: "滷肉飯", price: 60, keywords: ["滷肉飯", "魯肉飯"] },
@@ -76,7 +75,6 @@
             { id: 5, name: "熱紅茶", price: 35, keywords: ["熱紅茶", "紅茶"] }
         ];
 
-        // 廣東話數字對照表
         const numMap = {
             "一": 1, "二": 2, "兩": 2, "雙": 2, "三": 3, "四": 4, "五": 5,
             "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
@@ -108,93 +106,120 @@
             };
         }
 
-        // 啟動語音監聽
         function startVoiceInteraction() {
             if (!recognition) return alert("你嘅瀏覽器唔支援 Web Speech API，請使用 Google Chrome 測試。");
-            
-            // 停止現有語音播報並開啟麥克風
             window.speechSynthesis.cancel();
             recognition.start();
             updateStatus('🎙️ 聽緊你講嘢... 請講話', 'listening');
         }
 
-        // 廣東話語意解析與購物車修復
+        // 精準處理加單與單項取消邏輯
         function processVoiceOrder(text) {
             updateStatus('🧠 處理緊你嘅訂單...', false);
-            let turnAddedItems = {}; // 存儲單次回合解析到嘅餐點，避免重複
 
-            // 清空指令
-            if (text.includes("清空") || text.includes("重來") || text.includes("取消") || text.includes("唔要啦")) {
+            // 1. 全單清空指令（必須明確指明全單）
+            const fullClearKeywords = ["清空", "重來", "全部取消", "取消全部", "全部唔要", "全部清空"];
+            if (fullClearKeywords.some(k => text.includes(k))) {
                 cart = {};
                 updateCartUI();
-                speakCantoneseResponse("好嘅，幫你清空咗購物車，請重新落單。");
+                speakCantoneseResponse("好嘅，幫你清空咗整張單，可以重新落單。");
                 return;
             }
 
-            menu.forEach(item => {
-                // 修復：將每一項嘅關鍵字由長到短排序，防止重複命中
-                // 例如講咗「凍奶茶」，解析到「凍奶茶」關鍵字後，就要停止解析「奶茶」關鍵字。
-                item.keywords.sort((a,b) => b.length - a.length);
+            let removedSummaries = [];
+            let addedSummaries = [];
+            let processedItemIds = new Set(); // 避免同一個品項被重複加減
 
+            // 2. 判斷是否有取消 / 扣減意圖
+            const removeKeywords = ["唔要", "取消", "減", "扣", "唔需要", "拎走"];
+            const isRemoveIntent = removeKeywords.some(k => text.includes(k));
+
+            if (isRemoveIntent) {
+                menu.forEach(item => {
+                    if (!cart[item.id]) return; // 購物車沒有此項目則跳過
+
+                    item.keywords.sort((a,b) => b.length - a.length);
+                    for (let kw of item.keywords) {
+                        if (text.includes(kw)) {
+                            // 判斷是否有扣減數量 (如：「減 1 杯 凍奶茶」、「取消兩碗牛肉麵」)
+                            let qtyToRemove = 0;
+                            const numMatch = text.match(new RegExp(`([一二兩雙三四五六七八九十1-10])\\s*[碗杯份個碟包]?\\s*${kw}`));
+
+                            if (numMatch && numMatch[1]) {
+                                qtyToRemove = numMap[numMatch[1]] || 1;
+                            }
+
+                            if (qtyToRemove > 0 && cart[item.id].qty > qtyToRemove) {
+                                cart[item.id].qty -= qtyToRemove;
+                                removedSummaries.push(`${qtyToRemove}份${item.name}`);
+                            } else {
+                                delete cart[item.id]; // 沒指定數量或數量足夠時直接刪除品項
+                                removedSummaries.push(item.name);
+                            }
+                            processedItemIds.add(item.id);
+                            break;
+                        }
+                    }
+                });
+            }
+
+            // 3. 處理加單邏輯 (排除剛剛已經取消過的品項)
+            menu.forEach(item => {
+                if (processedItemIds.has(item.id)) return;
+
+                item.keywords.sort((a,b) => b.length - a.length);
                 for (let kw of item.keywords) {
                     if (text.includes(kw)) {
-                        let qty = 1; // 預設 1 份
-
-                        // 正則表達式：尋找關鍵字前面的「數字 + 量詞」
+                        let qty = 1;
                         const pattern = new RegExp(`([一二兩雙三四五六七八九十1-10])\\s*[碗杯份個碟包]?\\s*${kw}`);
                         const match = text.match(pattern);
 
                         if (match && match[1]) {
-                            const numChar = match[1];
-                            qty = numMap[numChar] || 1;
+                            qty = numMap[match[1]] || 1;
                         }
 
-                        // 如果講咗「多杯/份」，但STT聽唔到數字，仍預設qty=1
-
-                        // 將回合新增存入 turnAddedItems，唔再直接操作 cart。
-                        // 修復：由於關鍵字由長到短排序，第一次命中 (凍奶茶) 後即停止解析短關鍵字 (奶茶)。
-                        turnAddedItems[item.id] = qty;
-                        break; // 重要：停止尋找該餐點項目嘅其他短關鍵字。修復凍奶茶x2嘅問題。
+                        if (cart[item.id]) {
+                            cart[item.id].qty += qty;
+                        } else {
+                            cart[item.id] = { name: item.name, price: item.price, qty: qty };
+                        }
+                        addedSummaries.push(`${qty}份${item.name}`);
+                        processedItemIds.add(item.id);
+                        break;
                     }
                 }
             });
 
-            // 回合語音總結
-            let addedSummaries = [];
-            for (let id in turnAddedItems) {
-                const qty = turnAddedItems[id];
-                const item = menu.find(i => i.id == id);
-                
-                // 加入購物車 (累積計算)
-                if (cart[id]) {
-                    cart[id].qty += qty;
-                } else {
-                    cart[id] = { name: item.name, price: item.price, qty: qty };
-                }
-                
-                // 只朗讀回合新增嘅唯一餐點項目。修復朗讀回覆重複項目嘅問題。
-                addedSummaries.push(`${qty}份${item.name}`);
-            }
-
             updateCartUI();
 
-            // 生成廣東話語音回應
+            // 4. 組合回應語句
+            let replyParts = [];
+            if (removedSummaries.length > 0) {
+                replyParts.push(`幫你取消咗 ${removedSummaries.join('，')}`);
+            }
             if (addedSummaries.length > 0) {
-                const reply = `好嘅，幫你加咗 ${addedSummaries.join('，')}。請問仲需要其他嘢嗎？`;
-                speakCantoneseResponse(reply);
+                replyParts.push(`加咗 ${addedSummaries.join('，')}`);
+            }
+
+            if (replyParts.length > 0) {
+                speakCantoneseResponse(`好嘅，${replyParts.join('，')}。請問仲需要其他嘢嗎？`);
+            } else if (isRemoveIntent && removedSummaries.length === 0) {
+                speakCantoneseResponse("你嘅購物車入面冇呢樣嘢，無法幫你取消喔。");
             } else {
-                speakCantoneseResponse("唔好意思，我聽唔清楚你想點咩餐，可以講多一次嗎？");
+                speakCantoneseResponse("唔好意思，我聽唔清楚你想點咩或者取消咩，可以講多一次嗎？");
             }
         }
 
-        // 廣東話語音合成 (Text-to-Speech zh-HK)
         function speakCantoneseResponse(text) {
             updateStatus('🗣️ AI 回應緊...', 'speaking');
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'zh-HK'; // 設定廣東話發音
+            utterance.lang = 'zh-HK';
             utterance.rate = 1.0;
 
-            // 修復：語音播放結束後正確更新狀態
+            const voices = window.speechSynthesis.getVoices();
+            const hkVoice = voices.find(v => v.lang === 'zh-HK' || v.lang === 'zh_HK');
+            if (hkVoice) utterance.voice = hkVoice;
+
             utterance.onend = () => {
                 updateStatus('按按鈕繼續落單', false);
             };
@@ -202,7 +227,6 @@
             window.speechSynthesis.speak(utterance);
         }
 
-        // 更新購物車 UI
         function updateCartUI() {
             const cartEl = document.getElementById('cartList');
             cartEl.innerHTML = '';
@@ -232,7 +256,6 @@
             statusEl.className = 'status-badge ' + (className || '');
         }
 
-        // 預先載入語音包
         if (typeof speechSynthesis !== 'undefined') {
             speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
         }
