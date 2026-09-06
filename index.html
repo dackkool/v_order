@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 廣東話全互動點餐系統</title>
+    <title>AI 廣東話全互動點餐系統 (修復版)</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #121212; color: #fff; max-width: 900px; margin: 0 auto; padding: 20px; }
@@ -34,7 +34,7 @@
 <body>
 
     <div class="hero">
-        <h1>🎙️ 智能廣東話點餐系統</h1>
+        <h1>🎙️ 智能廣東話點餐系統 (修復版)</h1>
         <button id="micBtn" class="btn-mic" onclick="startVoiceInteraction()">按此開始用廣東話落單</button>
         <div><span id="status" class="status-badge">按上方按鈕開始</span></div>
     </div>
@@ -67,9 +67,9 @@
     </div>
 
     <script>
-        // 菜單數據 (加入廣東話別名與關鍵字)
+        // 菜單數據 (將關鍵字由長到短排序)
         const menu = [
-            { id: 1, name: "牛肉麵", price: 180, keywords: ["牛肉麵", "牛肉面"] },
+            { id: 1, name: "牛肉麵", price: 180, keywords: ["牛肉麵", "牛肉面", "牛肉"] },
             { id: 2, name: "滷肉飯", price: 60, keywords: ["滷肉飯", "魯肉飯"] },
             { id: 3, name: "炸雞塊", price: 85, keywords: ["炸雞塊", "炸雞", "雞塊"] },
             { id: 4, name: "凍奶茶", price: 50, keywords: ["凍奶茶", "冰奶茶", "奶茶"] },
@@ -89,7 +89,6 @@
 
         if (SpeechRecognition) {
             recognition = new SpeechRecognition();
-            // 改為香港廣東話
             recognition.lang = 'zh-HK';
             recognition.continuous = false;
             recognition.interimResults = false;
@@ -100,38 +99,48 @@
                 processVoiceOrder(text);
             };
 
-            recognition.onerror = () => updateStatus('聽唔到，請講多一次', false);
+            recognition.onerror = (event) => {
+                if (event.error !== 'no-speech') {
+                    updateStatus(`聽唔到呀（${event.error}），可以講多一次嗎？`, false);
+                } else {
+                    updateStatus('點點按鈕落單囉', false);
+                }
+            };
         }
 
         // 啟動語音監聽
         function startVoiceInteraction() {
             if (!recognition) return alert("你嘅瀏覽器唔支援 Web Speech API，請使用 Google Chrome 測試。");
             
+            // 停止現有語音播報並開啟麥克風
             window.speechSynthesis.cancel();
             recognition.start();
             updateStatus('🎙️ 聽緊你講嘢... 請講話', 'listening');
         }
 
-        // 廣東話語意解析與數量匹配
+        // 廣東話語意解析與購物車修復
         function processVoiceOrder(text) {
             updateStatus('🧠 處理緊你嘅訂單...', false);
-            let addedItems = [];
+            let turnAddedItems = {}; // 存儲單次回合解析到嘅餐點，避免重複
 
             // 清空指令
             if (text.includes("清空") || text.includes("重來") || text.includes("取消") || text.includes("唔要啦")) {
                 cart = {};
                 updateCartUI();
-                speakCantoneseResponse("已經幫你清空購物車，可以重新落單。");
+                speakCantoneseResponse("好嘅，幫你清空咗購物車，請重新落單。");
                 return;
             }
 
             menu.forEach(item => {
-                item.keywords.forEach(kw => {
+                // 修復：將每一項嘅關鍵字由長到短排序，防止重複命中
+                // 例如講咗「凍奶茶」，解析到「凍奶茶」關鍵字後，就要停止解析「奶茶」關鍵字。
+                item.keywords.sort((a,b) => b.length - a.length);
+
+                for (let kw of item.keywords) {
                     if (text.includes(kw)) {
                         let qty = 1; // 預設 1 份
-                        
-                        // 正則表達式：尋找關鍵字前面的「數字 + 量詞（碗/杯/份/個/碟/包）」
-                        // 例如：「兩碗牛肉麵」、「3杯凍奶茶」
+
+                        // 正則表達式：尋找關鍵字前面的「數字 + 量詞」
                         const pattern = new RegExp(`([一二兩雙三四五六七八九十1-10])\\s*[碗杯份個碟包]?\\s*${kw}`);
                         const match = text.match(pattern);
 
@@ -140,22 +149,38 @@
                             qty = numMap[numChar] || 1;
                         }
 
-                        // 加入購物車
-                        if (cart[item.id]) {
-                            cart[item.id].qty += qty;
-                        } else {
-                            cart[item.id] = { name: item.name, price: item.price, qty: qty };
-                        }
-                        addedItems.push(`${qty}份${item.name}`);
+                        // 如果講咗「多杯/份」，但STT聽唔到數字，仍預設qty=1
+
+                        // 將回合新增存入 turnAddedItems，唔再直接操作 cart。
+                        // 修復：由於關鍵字由長到短排序，第一次命中 (凍奶茶) 後即停止解析短關鍵字 (奶茶)。
+                        turnAddedItems[item.id] = qty;
+                        break; // 重要：停止尋找該餐點項目嘅其他短關鍵字。修復凍奶茶x2嘅問題。
                     }
-                });
+                }
             });
+
+            // 回合語音總結
+            let addedSummaries = [];
+            for (let id in turnAddedItems) {
+                const qty = turnAddedItems[id];
+                const item = menu.find(i => i.id == id);
+                
+                // 加入購物車 (累積計算)
+                if (cart[id]) {
+                    cart[id].qty += qty;
+                } else {
+                    cart[id] = { name: item.name, price: item.price, qty: qty };
+                }
+                
+                // 只朗讀回合新增嘅唯一餐點項目。修復朗讀回覆重複項目嘅問題。
+                addedSummaries.push(`${qty}份${item.name}`);
+            }
 
             updateCartUI();
 
-            // 廣東話語音回應
-            if (addedItems.length > 0) {
-                const reply = `好嘅，幫你加咗 ${addedItems.join('，')}。請問仲需要其他嘢嗎？`;
+            // 生成廣東話語音回應
+            if (addedSummaries.length > 0) {
+                const reply = `好嘅，幫你加咗 ${addedSummaries.join('，')}。請問仲需要其他嘢嗎？`;
                 speakCantoneseResponse(reply);
             } else {
                 speakCantoneseResponse("唔好意思，我聽唔清楚你想點咩餐，可以講多一次嗎？");
@@ -169,13 +194,7 @@
             utterance.lang = 'zh-HK'; // 設定廣東話發音
             utterance.rate = 1.0;
 
-            // 尋找系統內建的廣東話語音包
-            const voices = window.speechSynthesis.getVoices();
-            const hkVoice = voices.find(v => v.lang === 'zh-HK' || v.lang === 'zh_HK');
-            if (hkVoice) {
-                utterance.voice = hkVoice;
-            }
-
+            // 修復：語音播放結束後正確更新狀態
             utterance.onend = () => {
                 updateStatus('按按鈕繼續落單', false);
             };
