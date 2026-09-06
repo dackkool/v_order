@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 廣東話全互動點餐系統 (單項取消修復版)</title>
+    <title>AI 廣東話全互動點餐系統 (支援改單功能)</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #121212; color: #fff; max-width: 900px; margin: 0 auto; padding: 20px; }
@@ -42,7 +42,7 @@
     <!-- 即時語音對話框 -->
     <div class="chat-display">
         <div class="chat-label">AI 聽到你講：</div>
-        <div id="transcript" class="chat-text">「試講：唔要凍奶茶，改要熱紅茶」</div>
+        <div id="transcript" class="chat-text">「試講：幫我將其中一個牛肉麵改埋做滷肉飯跟住之後加多個凍奶茶」</div>
     </div>
 
     <div class="main-layout">
@@ -81,6 +81,16 @@
             "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10
         };
 
+        // 輔助函式：提取數量文字
+        function parseQty(str, defaultQty = 1) {
+            if (!str) return defaultQty;
+            if (str.includes("其中一個") || str.includes("一個") || str.includes("1個") || str.includes("多個") || str.includes("多杯") || str.includes("多份")) return 1;
+            for (let k in numMap) {
+                if (str.includes(k)) return numMap[k];
+            }
+            return defaultQty;
+        }
+
         let cart = {};
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         let recognition;
@@ -113,11 +123,11 @@
             updateStatus('🎙️ 聽緊你講嘢... 請講話', 'listening');
         }
 
-        // 精準處理加單與單項取消邏輯
-        function processVoiceOrder(text) {
+        function processVoiceOrder(rawText) {
             updateStatus('🧠 處理緊你嘅訂單...', false);
+            let text = rawText; // 可被截斷或抹去已處理文字
 
-            // 1. 全單清空指令（必須明確指明全單）
+            // 1. 全單清空
             const fullClearKeywords = ["清空", "重來", "全部取消", "取消全部", "全部唔要", "全部清空"];
             if (fullClearKeywords.some(k => text.includes(k))) {
                 cart = {};
@@ -126,56 +136,93 @@
                 return;
             }
 
+            let replacedSummaries = [];
             let removedSummaries = [];
             let addedSummaries = [];
-            let processedItemIds = new Set(); // 避免同一個品項被重複加減
 
-            // 2. 判斷是否有取消 / 扣減意圖
+            // 2. 廣東話「改 / 換 / 轉」替換邏輯 (例：「將其中一個牛肉麵改埋做滷肉飯」)
+            const replaceKeywords = ["改", "換", "轉"];
+            if (replaceKeywords.some(k => text.includes(k))) {
+                menu.forEach(itemA => {
+                    itemA.keywords.sort((a,b) => b.length - a.length);
+                    for (let kwA of itemA.keywords) {
+                        menu.forEach(itemB => {
+                            if (itemA.id === itemB.id) return;
+                            itemB.keywords.sort((a,b) => b.length - a.length);
+                            for (let kwB of itemB.keywords) {
+                                // 匹配模式： (數量A)? (項目A) (改/換/轉)(埋/做/成/為)* (數量B)? (項目B)
+                                const pattern = new RegExp(`(其中一個|[一二兩雙三四五六七八九十1-10]\\s*[碗杯份個碟包]?)?\\s*${kwA}\\s*(改|換|轉)\\s*(?:埋|做|成|為)*\\s*([一二兩雙三四五六七八九十1-10]\\s*[碗杯份個碟包]?)?\\s*${kwB}`);
+                                const match = text.match(pattern);
+
+                                if (match) {
+                                    const qtyA = parseQty(match[1], 1);
+                                    const qtyB = parseQty(match[2], qtyA);
+
+                                    // 檢查購物車內是否有 A，若沒有則依然進行替換（以現有卡片為準）
+                                    if (cart[itemA.id]) {
+                                        if (cart[itemA.id].qty > qtyA) {
+                                            cart[itemA.id].qty -= qtyA;
+                                        } else {
+                                            delete cart[itemA.id];
+                                        }
+                                    }
+
+                                    // 增加 B
+                                    if (cart[itemB.id]) {
+                                        cart[itemB.id].qty += qtyB;
+                                    } else {
+                                        cart[itemB.id] = { name: itemB.name, price: itemB.price, qty: qtyB };
+                                    }
+
+                                    replacedSummaries.push(`將 ${qtyA}份${itemA.name} 改做 ${qtyB}份${itemB.name}`);
+
+                                    // 抹去已處理的改單語句，避免後續重複加單
+                                    text = text.replace(match[0], "");
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+
+            // 3. 純取消 / 扣減邏輯 (例如：「唔要凍奶茶」、「減一碗牛肉麵」)
             const removeKeywords = ["唔要", "取消", "減", "扣", "唔需要", "拎走"];
-            const isRemoveIntent = removeKeywords.some(k => text.includes(k));
-
-            if (isRemoveIntent) {
+            if (removeKeywords.some(k => text.includes(k))) {
                 menu.forEach(item => {
-                    if (!cart[item.id]) return; // 購物車沒有此項目則跳過
+                    if (!cart[item.id]) return;
 
                     item.keywords.sort((a,b) => b.length - a.length);
                     for (let kw of item.keywords) {
                         if (text.includes(kw)) {
-                            // 判斷是否有扣減數量 (如：「減 1 杯 凍奶茶」、「取消兩碗牛肉麵」)
                             let qtyToRemove = 0;
                             const numMatch = text.match(new RegExp(`([一二兩雙三四五六七八九十1-10])\\s*[碗杯份個碟包]?\\s*${kw}`));
-
-                            if (numMatch && numMatch[1]) {
-                                qtyToRemove = numMap[numMatch[1]] || 1;
-                            }
+                            if (numMatch && numMatch[1]) qtyToRemove = numMap[numMatch[1]] || 1;
 
                             if (qtyToRemove > 0 && cart[item.id].qty > qtyToRemove) {
                                 cart[item.id].qty -= qtyToRemove;
                                 removedSummaries.push(`${qtyToRemove}份${item.name}`);
                             } else {
-                                delete cart[item.id]; // 沒指定數量或數量足夠時直接刪除品項
+                                delete cart[item.id];
                                 removedSummaries.push(item.name);
                             }
-                            processedItemIds.add(item.id);
+                            text = text.replace(kw, ""); // 抹去已取消的關鍵字
                             break;
                         }
                     }
                 });
             }
 
-            // 3. 處理加單邏輯 (排除剛剛已經取消過的品項)
+            // 4. 加單邏輯 (處理剩餘文本，如：「加多個凍奶茶」)
             menu.forEach(item => {
-                if (processedItemIds.has(item.id)) return;
-
                 item.keywords.sort((a,b) => b.length - a.length);
                 for (let kw of item.keywords) {
                     if (text.includes(kw)) {
                         let qty = 1;
-                        const pattern = new RegExp(`([一二兩雙三四五六七八九十1-10])\\s*[碗杯份個碟包]?\\s*${kw}`);
+                        const pattern = new RegExp(`(加多?個?|加多?杯?|加多?份?|[一二兩雙三四五六七八九十1-10]\\s*[碗杯份個碟包]?)?\\s*${kw}`);
                         const match = text.match(pattern);
 
                         if (match && match[1]) {
-                            qty = numMap[match[1]] || 1;
+                            qty = parseQty(match[1], 1);
                         }
 
                         if (cart[item.id]) {
@@ -184,7 +231,7 @@
                             cart[item.id] = { name: item.name, price: item.price, qty: qty };
                         }
                         addedSummaries.push(`${qty}份${item.name}`);
-                        processedItemIds.add(item.id);
+                        text = text.replace(kw, ""); // 防重複
                         break;
                     }
                 }
@@ -192,21 +239,16 @@
 
             updateCartUI();
 
-            // 4. 組合回應語句
+            // 5. 生成廣東話語音回應
             let replyParts = [];
-            if (removedSummaries.length > 0) {
-                replyParts.push(`幫你取消咗 ${removedSummaries.join('，')}`);
-            }
-            if (addedSummaries.length > 0) {
-                replyParts.push(`加咗 ${addedSummaries.join('，')}`);
-            }
+            if (replacedSummaries.length > 0) replyParts.push(`幫你${replacedSummaries.join('，')}`);
+            if (removedSummaries.length > 0) replyParts.push(`取消咗 ${removedSummaries.join('，')}`);
+            if (addedSummaries.length > 0) replyParts.push(`加咗 ${addedSummaries.join('，')}`);
 
             if (replyParts.length > 0) {
                 speakCantoneseResponse(`好嘅，${replyParts.join('，')}。請問仲需要其他嘢嗎？`);
-            } else if (isRemoveIntent && removedSummaries.length === 0) {
-                speakCantoneseResponse("你嘅購物車入面冇呢樣嘢，無法幫你取消喔。");
             } else {
-                speakCantoneseResponse("唔好意思，我聽唔清楚你想點咩或者取消咩，可以講多一次嗎？");
+                speakCantoneseResponse("唔好意思，我聽唔清楚你想點咩或者改咩，可以講多一次嗎？");
             }
         }
 
