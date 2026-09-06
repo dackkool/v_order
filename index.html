@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 全互動語音點餐系統</title>
+    <title>AI 廣東話全互動點餐系統</title>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; background: #121212; color: #fff; max-width: 900px; margin: 0 auto; padding: 20px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #121212; color: #fff; max-width: 900px; margin: 0 auto; padding: 20px; }
         
         .hero { text-align: center; padding: 20px 0; }
         .status-badge { display: inline-block; padding: 6px 16px; border-radius: 20px; font-weight: bold; margin-top: 10px; background: #333; }
@@ -34,44 +34,54 @@
 <body>
 
     <div class="hero">
-        <h1>🎙️ 智能語音互動餐廳</h1>
-        <button id="micBtn" class="btn-mic" onclick="startVoiceInteraction()">點擊開始語音點餐</button>
-        <div><span id="status" class="status-badge">點擊上方按鈕開始</span></div>
+        <h1>🎙️ 智能廣東話點餐系統</h1>
+        <button id="micBtn" class="btn-mic" onclick="startVoiceInteraction()">按此開始用廣東話落單</button>
+        <div><span id="status" class="status-badge">按上方按鈕開始</span></div>
     </div>
 
+    <!-- 即時語音對話框 -->
     <div class="chat-display">
-        <div class="chat-label">AI 聽到您說：</div>
-        <div id="transcript" class="chat-text">「請點擊按鈕後開始說話，例如：我要兩份牛肉麵，再一杯冰奶茶」</div>
+        <div class="chat-label">AI 聽到你講：</div>
+        <div id="transcript" class="chat-text">「請按按鈕後講話，例如：我要兩碗牛肉麵，一杯凍奶茶」</div>
     </div>
 
     <div class="main-layout">
+        <!-- 菜單看板 -->
         <div class="panel">
-            <h3>📖 菜單</h3>
+            <h3>📖 餐牌 (Menu)</h3>
             <div class="menu-item"><span>牛肉麵</span><span>$180</span></div>
             <div class="menu-item"><span>滷肉飯</span><span>$60</span></div>
             <div class="menu-item"><span>炸雞塊</span><span>$85</span></div>
-            <div class="menu-item"><span>冰奶茶</span><span>$50</span></div>
+            <div class="menu-item"><span>凍奶茶</span><span>$50</span></div>
             <div class="menu-item"><span>熱紅茶</span><span>$35</span></div>
         </div>
 
+        <!-- 即時購物車 -->
         <div class="panel">
-            <h3>🛒 您的點餐購物車</h3>
+            <h3>🛒 你嘅購物車</h3>
             <div id="cartList">
-                <p style="color: #666;">購物車為空</p>
+                <p style="color: #666;">購物車係空的</p>
             </div>
             <div id="totalPrice" class="total-price">總計: $0</div>
         </div>
     </div>
 
     <script>
-        // 菜單項目數據
+        // 菜單數據 (加入廣東話別名與關鍵字)
         const menu = [
-            { id: 1, name: "牛肉麵", price: 180, keywords: ["牛肉麵", "牛肉", "麵"] },
-            { id: 2, name: "滷肉飯", price: 60, keywords: ["滷肉飯", "魯肉飯", "飯"] },
+            { id: 1, name: "牛肉麵", price: 180, keywords: ["牛肉麵", "牛肉面"] },
+            { id: 2, name: "滷肉飯", price: 60, keywords: ["滷肉飯", "魯肉飯"] },
             { id: 3, name: "炸雞塊", price: 85, keywords: ["炸雞塊", "炸雞", "雞塊"] },
-            { id: 4, name: "冰奶茶", price: 50, keywords: ["冰奶茶", "奶茶"] },
+            { id: 4, name: "凍奶茶", price: 50, keywords: ["凍奶茶", "冰奶茶", "奶茶"] },
             { id: 5, name: "熱紅茶", price: 35, keywords: ["熱紅茶", "紅茶"] }
         ];
+
+        // 廣東話數字對照表
+        const numMap = {
+            "一": 1, "二": 2, "兩": 2, "雙": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+            "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10
+        };
 
         let cart = {};
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -79,7 +89,8 @@
 
         if (SpeechRecognition) {
             recognition = new SpeechRecognition();
-            recognition.lang = 'zh-TW';
+            // 改為香港廣東話
+            recognition.lang = 'zh-HK';
             recognition.continuous = false;
             recognition.interimResults = false;
 
@@ -89,45 +100,47 @@
                 processVoiceOrder(text);
             };
 
-            recognition.onerror = () => updateStatus('識別失敗，請再試一次', false);
+            recognition.onerror = () => updateStatus('聽唔到，請講多一次', false);
         }
 
         // 啟動語音監聽
         function startVoiceInteraction() {
-            if (!recognition) return alert("您的瀏覽器不支援 Web Speech API，請使用 Chrome。");
+            if (!recognition) return alert("你嘅瀏覽器唔支援 Web Speech API，請使用 Google Chrome 測試。");
             
-            // 停止現有語音播報並開啟麥克風
             window.speechSynthesis.cancel();
             recognition.start();
-            updateStatus('🎙️ 正在聆聽中... 請說話', 'listening');
+            updateStatus('🎙️ 聽緊你講嘢... 請講話', 'listening');
         }
 
-        // 語意解析與購物車更新
+        // 廣東話語意解析與數量匹配
         function processVoiceOrder(text) {
-            updateStatus('🧠 正在處理您的訂單...', false);
+            updateStatus('🧠 處理緊你嘅訂單...', false);
             let addedItems = [];
-            const numMap = { "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5 };
 
-            // 清空舊指令（如果說「取消」或「清空」）
-            if (text.includes("清空") || text.includes("重來") || text.includes("取消")) {
+            // 清空指令
+            if (text.includes("清空") || text.includes("重來") || text.includes("取消") || text.includes("唔要啦")) {
                 cart = {};
                 updateCartUI();
-                speakResponse("已為您清空購物車，請重新點餐。");
+                speakCantoneseResponse("已經幫你清空購物車，可以重新落單。");
                 return;
             }
 
             menu.forEach(item => {
                 item.keywords.forEach(kw => {
                     if (text.includes(kw)) {
-                        let qty = 1;
-                        const idx = text.indexOf(kw);
-                        for (let i = Math.max(0, idx - 2); i < idx; i++) {
-                            if (numMap[text[i]]) {
-                                qty = numMap[text[i]];
-                                break;
-                            }
+                        let qty = 1; // 預設 1 份
+                        
+                        // 正則表達式：尋找關鍵字前面的「數字 + 量詞（碗/杯/份/個/碟/包）」
+                        // 例如：「兩碗牛肉麵」、「3杯凍奶茶」
+                        const pattern = new RegExp(`([一二兩雙三四五六七八九十1-10])\\s*[碗杯份個碟包]?\\s*${kw}`);
+                        const match = text.match(pattern);
+
+                        if (match && match[1]) {
+                            const numChar = match[1];
+                            qty = numMap[numChar] || 1;
                         }
 
+                        // 加入購物車
                         if (cart[item.id]) {
                             cart[item.id].qty += qty;
                         } else {
@@ -140,30 +153,37 @@
 
             updateCartUI();
 
-            // 語音反饋生成
+            // 廣東話語音回應
             if (addedItems.length > 0) {
-                const reply = `好的，已為您加入 ${addedItems.join('、')}。請問還需要其他的嗎？`;
-                speakResponse(reply);
+                const reply = `好嘅，幫你加咗 ${addedItems.join('，')}。請問仲需要其他嘢嗎？`;
+                speakCantoneseResponse(reply);
             } else {
-                speakResponse("不好意思，我沒有聽清您要的餐點，可以再說一次嗎？");
+                speakCantoneseResponse("唔好意思，我聽唔清楚你想點咩餐，可以講多一次嗎？");
             }
         }
 
-        // 語音合成反饋 (Text-to-Speech)
-        function speakResponse(text) {
-            updateStatus('🗣️ AI 回應中...', 'speaking');
+        // 廣東話語音合成 (Text-to-Speech zh-HK)
+        function speakCantoneseResponse(text) {
+            updateStatus('🗣️ AI 回應緊...', 'speaking');
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'zh-TW';
+            utterance.lang = 'zh-HK'; // 設定廣東話發音
             utterance.rate = 1.0;
 
+            // 尋找系統內建的廣東話語音包
+            const voices = window.speechSynthesis.getVoices();
+            const hkVoice = voices.find(v => v.lang === 'zh-HK' || v.lang === 'zh_HK');
+            if (hkVoice) {
+                utterance.voice = hkVoice;
+            }
+
             utterance.onend = () => {
-                updateStatus('點擊按鈕繼續點餐', false);
+                updateStatus('按按鈕繼續落單', false);
             };
 
             window.speechSynthesis.speak(utterance);
         }
 
-        // 更新購物車畫面
+        // 更新購物車 UI
         function updateCartUI() {
             const cartEl = document.getElementById('cartList');
             cartEl.innerHTML = '';
@@ -171,7 +191,7 @@
 
             const items = Object.values(cart);
             if (items.length === 0) {
-                cartEl.innerHTML = '<p style="color: #666;">購物車為空</p>';
+                cartEl.innerHTML = '<p style="color: #666;">購物車係空的</p>';
             } else {
                 items.forEach(item => {
                     const subtotal = item.price * item.qty;
@@ -191,6 +211,11 @@
             const statusEl = document.getElementById('status');
             statusEl.innerText = text;
             statusEl.className = 'status-badge ' + (className || '');
+        }
+
+        // 預先載入語音包
+        if (typeof speechSynthesis !== 'undefined') {
+            speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
         }
     </script>
 </body>
